@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: trading-bot
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node scheduler-service.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+    autoDeploy: true

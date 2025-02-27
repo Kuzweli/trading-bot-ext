@@ -1,0 +1,25 @@
+{
+    "manifest_version": 2,
+    "name": "Trading Bot Controller",
+    "version": "1.0",
+    "permissions": [
+        "http://localhost:3000/*",
+        "storage",
+        "notifications",
+        "scripting",
+        "tabs",
+        "alarms"
+    ],
+    "content_security_policy": "default-src 'self'; connect-src 'self' http://localhost:3000; script-src 'self'; object-src 'self'",
+    "background": {
+        "scripts": ["project/background.js"],
+        "persistent": false
+    },
+    "browser_action": {
+        "default_popup": "project/popup/popup.html"
+    },
+    "icons": {
+        "48": "assets/icon-48.png",
+        "128": "assets/icon-128.png"
+    }
+}

@@ -1,0 +1,33 @@
+{
+    "yandex":  {
+                   "organizationId":  "einsofinfosgmailcom",
+                   "cloudId":  "b1gl0lk5gh4j12elp243",
+                   "folderName":  "cloud-einsofinfosgmailcom",
+                   "deployPath":  "/home/yc-user/trading-bot",
+                   "instanceName":  "trading-bot-instance",
+                   "deployTimeout":  300,
+                   "sshKeyPath":  "~/.ssh/id_rsa",
+                   "deployment":  {
+                                      "compress":  true,
+                                      "excludes":  [
+                                                       "node_modules",
+                                                       "logs",
+                                                       "*.log"
+                                                   ]
+                                  }
+               },
+    "security":  {
+                     "authToken":  "Votre token de s+�curit+�: 6db21e540beaf55ec5a4ecc6e45a65d00370c1fe164b846d430a4c9163cd5f44",
+                     "allowedIPs":  [
+                                        "VOTRE_IP"
+                                    ]
+                 },
+    "robot":  {
+                  "endpoint":  "http://VOTRE_IP_LOCALE:PORT/start-robot"
+              },
+    "server":  {
+                   "port":  3000,
+                   "host":  "0.0.0.0",
+                   "logLevel":  "info"
+               }
+}

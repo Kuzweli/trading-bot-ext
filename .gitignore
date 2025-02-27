@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+
+# Logs
+*.log
+logs/
+
+# Environment variables
+.env
+
+# Configuration sensible
+config.*.js
+
+# Cache
+.cache/
+.npm/
+
+# Système
+.DS_Store
+Thumbs.db
+
+# Yandex Cloud
+.yc/

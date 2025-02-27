@@ -1,0 +1,32 @@
+#cloud-config
+packages:
+  - nodejs
+  - npm
+  - git
+
+write_files:
+  - path: /etc/systemd/system/tradingbot.service
+    content: |
+      [Unit]
+      Description=Trading Bot Service
+      After=network.target
+
+      [Service]
+      Environment=NODE_ENV=production
+      Type=simple
+      User=tradingbot
+      WorkingDirectory=/opt/tradingbot
+      ExecStart=/usr/bin/node server.js
+      Restart=always
+
+      [Install]
+      WantedBy=multi-user.target
+
+runcmd:
+  - useradd -m -s /bin/bash tradingbot
+  - mkdir -p /opt/tradingbot
+  - git clone https://github.com/votre-repo/trading-bot.git /opt/tradingbot
+  - chown -R tradingbot:tradingbot /opt/tradingbot
+  - cd /opt/tradingbot && npm install
+  - systemctl enable tradingbot
+  - systemctl start tradingbot
