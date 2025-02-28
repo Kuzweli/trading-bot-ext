@@ -3,9 +3,46 @@ const cors = require('cors');
 const cron = require('node-cron');
 const axios = require('axios');
 const config = require('./config');
+const HybridBot = require('./hybrid-bot');
+const BotExecutor = require('./bot-executor');
+const rateLimit = require('express-rate-limit');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
+
+    // Ajout des variables manquantes
+const scheduledExecutions = [];
+
+// Configuration de base avec CORS unifié
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+app.use(cors({
+    origin: [
+        'http://localhost:3000',
+        'https://trading-bot-ext.onrender.com',
+        'https://bot.deriv.com',
+        'chrome-extension://*'
+    ],
+    methods: ['GET', 'POST', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'x-auth-token'],
+    credentials: true
+}));
+
+// Rate limiter
+const limiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 100 // 100 requêtes par IP
+});
+app.use(limiter);
+
+// Remplacement du fetch par axios pour le keep-alive
+setInterval(async () => {
+    try {
+        await axios.get("https://trading-bot-ext.onrender.com/api/status");
+    } catch (err) {
+        console.log("Keep-alive échoué:", err.message);
+    }
+}, 5 * 60 * 1000);
 
 // Amélioration de la gestion des horaires
 const TRADING_SCHEDULE = {
@@ -28,40 +65,28 @@ const SERVER_CONFIG = {
     authToken: config.security.authToken
 };
 
-// Ajout du middleware CORS avec plus de logs
-app.use(cors({
-    origin: function(origin, callback) {
-        console.log('Requête reçue de:', origin);
-        
-        // Allow requests with no origin (like mobile apps or curl requests)
-        if(!origin) {
-            console.log('Requête sans origine acceptée');
-            return callback(null, true);
-        }
-        
-        // Allow all chrome-extension origins and localhost
-        if(origin.startsWith('chrome-extension://') || origin.includes('localhost')) {
-            console.log('Origine acceptée:', origin);
-            return callback(null, true);
-        }
-        
-        console.log('Origine refusée:', origin);
-        callback(new Error('Not allowed by CORS'));
-    },
-    credentials: true,
-    methods: ['GET', 'POST', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'x-auth-token', 'Accept'],
-}));
-
-// Ajout de la sécurité avec exception pour /test
+// Ajout de la sécurité avec exception pour plusieurs routes
 app.use((req, res, next) => {
-    // Skip authentication for test endpoint
-    if (req.path === '/test') {
+    // Liste des routes publiques
+    const publicRoutes = [
+        '/test',
+        '/api/status',
+        '/schedules'
+    ];
+    
+    // Skip authentication for public routes
+    if (publicRoutes.includes(req.path)) {
         return next();
     }
     
+    // Vérification du token uniquement pour les routes protégées
     const token = req.headers['x-auth-token'];
     if (token !== SERVER_CONFIG.authToken) {
+        console.log('Accès sans token à:', req.path);
+        // On continue quand même en mode développement
+        if (process.env.NODE_ENV !== 'production') {
+            return next();
+        }
         return res.status(401).json({ error: 'Non autorisé' });
     }
     next();
@@ -213,38 +238,41 @@ app.get('/robot-status', (req, res) => {
     });
 });
 
-// Mise à jour de la fonction startRobot avec retry
+const bot = new BotExecutor();
+
+// Initialiser le bot au démarrage
+bot.init().catch(console.error);
+
+// Ajouter ces nouveaux endpoints pour l'extension
+app.get('/bot/status', async (req, res) => {
+    const status = await bot.getStatus();
+    res.json(status);
+});
+
+app.post('/bot/config', express.json(), async (req, res) => {
+    const newConfig = await bot.updateConfig(req.body);
+    res.json({ success: true, config: newConfig });
+});
+
+// Amélioration de la gestion des erreurs dans startRobot
 async function startRobot() {
-    console.log('\n=== Démarrage du robot ===');
-    console.log('Heure:', new Date().toLocaleString());
-    
-    for (let attempt = 1; attempt <= config.robot.retryAttempts; attempt++) {
-        try {
-            console.log(`Tentative ${attempt}/${config.robot.retryAttempts}`);
-            
-            const response = await axios.post(config.robot.endpoint, {}, {
-                headers: {
-                    'x-auth-token': config.security.authToken,
-                    'Content-Type': 'application/json'
-                },
-                timeout: config.robot.timeout
-            });
-            
-            console.log('✅ Robot démarré avec succès:', response.data);
-            return true;
-        } catch (error) {
-            console.error(`❌ Erreur tentative ${attempt}:`, error.message);
-            
-            if (attempt < config.robot.retryAttempts) {
-                console.log(`Attente de ${config.robot.retryDelay}ms avant nouvelle tentative...`);
-                await new Promise(resolve => setTimeout(resolve, config.robot.retryDelay));
-            } else {
-                console.error('❌ Toutes les tentatives ont échoué');
-                return false;
-            }
-        }
+    try {
+        const result = await bot.executeBot();
+        scheduledExecutions.push({
+            timestamp: new Date().toISOString(),
+            success: true,
+            result
+        });
+        return true;
+    } catch (error) {
+        console.error("Erreur d'exécution du robot:", error);
+        scheduledExecutions.push({
+            timestamp: new Date().toISOString(),
+            success: false,
+            error: error.message
+        });
+        return false;
     }
-    return false;
 }
 
 // Configuration améliorée du planificateur
@@ -297,11 +325,44 @@ function setupScheduler() {
     }
 }
 
-// Amélioration des logs au démarrage
-app.listen(PORT, () => {
-    console.log(`[${new Date().toISOString()}] Service de planification démarré sur le port ${PORT}`);
-    console.log('URLs disponibles:');
-    console.log(`- http://localhost:${PORT}/test`);
-    console.log(`- http://localhost:${PORT}/api/status`);
-    console.log(`- http://localhost:${PORT}/update-schedule`);
+// Gestion des erreurs globale
+app.use((err, req, res, next) => {
+    console.error('Erreur:', err);
+    res.status(500).json({
+        error: 'Erreur serveur',
+        message: err.message
+    });
 });
+
+// Gestion SIGTERM améliorée
+process.on('SIGTERM', async () => {
+    console.log('Réception signal SIGTERM, fermeture gracieuse...');
+    try {
+        await bot.cleanup(); // S'assurer que le bot est correctement arrêté
+        server.close(() => {
+            console.log('Serveur arrêté proprement');
+            process.exit(0);
+        });
+    } catch (error) {
+        console.error('Erreur lors de la fermeture:', error);
+        process.exit(1);
+    }
+});
+
+// Ajout de la gestion de SIGINT pour le développement local
+process.on('SIGINT', () => {
+    console.log('Réception SIGINT (Ctrl+C)');
+    process.emit('SIGTERM');
+});
+
+// Stockage du serveur pour gestion SIGTERM
+const server = app.listen(PORT, () => {
+    console.log(`[${new Date().toISOString()}] Service démarré sur le port ${PORT}`);
+});
+
+// Amélioration des logs au démarrage
+console.log(`[${new Date().toISOString()}] Service de planification démarré sur le port ${PORT}`);
+console.log('URLs disponibles:');
+console.log(`- http://localhost:${PORT}/test`);
+console.log(`- http://localhost:${PORT}/api/status`);
+console.log(`- http://localhost:${PORT}/update-schedule`);
